@@ -13,6 +13,7 @@ from astrbot.api.star import Context, Star, StarTools
 
 from .api_client import MarketApiClient
 from .market import MARKETS, resolve_market
+from .parsing import parse_money_to_cents
 from .permissions import is_group_umo_allowed, normalize_allowed_umos
 from .renderer import (
     MARKET_TEMPLATE,
@@ -327,13 +328,17 @@ class HotMarketPlugin(Star):
         self,
         event: AstrMessageEvent,
         ticker: str,
-        amount: float,
+        amount: str,
     ):
         """按热币金额买入股票。"""
         if denied := self._access_denied_message(event):
             yield event.plain_result(denied)
             return
         try:
+            try:
+                budget_cents = parse_money_to_cents(amount)
+            except ValueError as exc:
+                raise TradeError(str(exc)) from exc
             group_id, user_id, user_name = self._identity(event)
             await self._ensure_fresh()
             async with self._database_lock:
@@ -342,7 +347,7 @@ class HotMarketPlugin(Star):
                     user_id=user_id,
                     user_name=user_name,
                     ticker=ticker,
-                    budget_cents=round(amount * 100),
+                    budget_cents=budget_cents,
                     starting_cash_cents=self.starting_cash_cents,
                     fee_rate=self.fee_rate,
                     max_position_ratio=self.max_position_ratio,

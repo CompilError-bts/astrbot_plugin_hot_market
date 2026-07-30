@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-import hashlib
 import math
 import re
 import unicodedata
 from dataclasses import dataclass
 from typing import Any
+
+import jieba
+from jieba import analyse
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,13 +101,44 @@ def normalize_title(title: str) -> str:
     return re.sub(r"[\W_]+", "", normalized, flags=re.UNICODE)
 
 
-def ticker_for(source: str, normalized_title: str) -> str:
+MAX_TICKER_KEYWORD_CHARS = 8
+
+
+def _clean_ticker_keyword(value: str) -> str:
+    return "".join(character for character in value if character.isalnum()).upper()
+
+
+def extract_ticker_keywords(title: str, max_chars: int = MAX_TICKER_KEYWORD_CHARS) -> str:
+    """Extract a short readable code with jieba's mature TF-IDF algorithm."""
+    weighted_keywords = analyse.extract_tags(
+        title,
+        topK=4,
+        withWeight=False,
+    )
+    candidates = list(weighted_keywords)
+    if not candidates:
+        candidates = list(jieba.cut(title, cut_all=False))
+
+    code = ""
+    seen: set[str] = set()
+    for candidate in candidates:
+        keyword = _clean_ticker_keyword(str(candidate))
+        if not keyword or keyword in seen:
+            continue
+        seen.add(keyword)
+        remaining = max_chars - len(code)
+        if remaining <= 0:
+            break
+        code += keyword[:remaining]
+
+    if not code:
+        code = _clean_ticker_keyword(normalize_title(title))[:max_chars]
+    return code or "HOT"
+
+
+def ticker_for(source: str, title: str) -> str:
     market = MARKETS[source]
-    digest = hashlib.sha1(
-        f"{source}:{normalized_title}".encode(),
-        usedforsecurity=False,
-    ).hexdigest()[:8]
-    return f"{market.prefix}-{digest.upper()}"
+    return f"{market.prefix}-{extract_ticker_keywords(title)}"
 
 
 def target_price_cents(
@@ -208,7 +241,7 @@ def parse_market_payload(
                 source=source,
                 title=title,
                 normalized_title=normalized_title,
-                ticker=ticker_for(source, normalized_title),
+                ticker=ticker_for(source, title),
                 rank=rank,
                 list_size=list_size,
                 link=str(raw_item.get("link") or raw_item.get("url") or ""),

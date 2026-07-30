@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -57,6 +58,14 @@ class MarketDatabase:
 
             CREATE INDEX IF NOT EXISTS idx_stocks_source_status
             ON stocks(source, status, rank);
+
+            CREATE TABLE IF NOT EXISTS ticker_aliases (
+                alias TEXT COLLATE NOCASE PRIMARY KEY,
+                stock_id INTEGER NOT NULL REFERENCES stocks(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_ticker_aliases_stock
+            ON ticker_aliases(stock_id);
 
             CREATE TABLE IF NOT EXISTS quotes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -127,6 +136,72 @@ class MarketDatabase:
         else:
             self.connection.commit()
 
+    @staticmethod
+    def _stock_by_ticker(
+        connection: sqlite3.Connection,
+        ticker: str,
+    ) -> sqlite3.Row | None:
+        normalized = ticker.strip()
+        row = connection.execute(
+            "SELECT * FROM stocks WHERE ticker = ? COLLATE NOCASE",
+            (normalized,),
+        ).fetchone()
+        if row:
+            return row
+        return connection.execute(
+            """
+            SELECT s.*
+            FROM ticker_aliases a
+            JOIN stocks s ON s.id = a.stock_id
+            WHERE a.alias = ? COLLATE NOCASE
+            """,
+            (normalized,),
+        ).fetchone()
+
+    @staticmethod
+    def _ticker_is_available(
+        connection: sqlite3.Connection,
+        ticker: str,
+        exclude_stock_id: int | None,
+    ) -> bool:
+        stock = connection.execute(
+            "SELECT id FROM stocks WHERE ticker = ? COLLATE NOCASE",
+            (ticker,),
+        ).fetchone()
+        if stock and int(stock["id"]) != exclude_stock_id:
+            return False
+        alias = connection.execute(
+            "SELECT stock_id FROM ticker_aliases WHERE alias = ? COLLATE NOCASE",
+            (ticker,),
+        ).fetchone()
+        return not alias or int(alias["stock_id"]) == exclude_stock_id
+
+    def _unique_ticker(
+        self,
+        connection: sqlite3.Connection,
+        desired: str,
+        source: str,
+        normalized_title: str,
+        exclude_stock_id: int | None = None,
+    ) -> str:
+        base = desired.strip().upper()
+        if self._ticker_is_available(connection, base, exclude_stock_id):
+            return base
+
+        digest = hashlib.sha1(
+            f"{source}:{normalized_title}".encode(),
+            usedforsecurity=False,
+        ).hexdigest().upper()
+        for suffix_length in (4, 6, 8, 12, 20, 40):
+            candidate = f"{base}-{digest[:suffix_length]}"
+            if self._ticker_is_available(
+                connection,
+                candidate,
+                exclude_stock_id,
+            ):
+                return candidate
+        raise RuntimeError("无法为热点生成唯一股票代码")
+
     def record_source_error(self, source: str, error: str) -> None:
         self.connection.execute(
             """
@@ -160,6 +235,12 @@ class MarketDatabase:
             for item in items:
                 row = existing.get(item.normalized_title)
                 if row is None:
+                    ticker = self._unique_ticker(
+                        connection,
+                        item.ticker,
+                        source,
+                        item.normalized_title,
+                    )
                     cursor = connection.execute(
                         """
                         INSERT INTO stocks(
@@ -170,7 +251,7 @@ class MarketDatabase:
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, ?, ?, ?)
                         """,
                         (
-                            item.ticker,
+                            ticker,
                             source,
                             item.title,
                             item.normalized_title,
@@ -189,6 +270,23 @@ class MarketDatabase:
                     price_cents = item.target_price_cents
                     listed_count += 1
                 else:
+                    ticker = self._unique_ticker(
+                        connection,
+                        item.ticker,
+                        source,
+                        item.normalized_title,
+                        exclude_stock_id=int(row["id"]),
+                    )
+                    old_ticker = str(row["ticker"])
+                    if ticker.casefold() != old_ticker.casefold():
+                        connection.execute(
+                            """
+                            INSERT INTO ticker_aliases(alias, stock_id)
+                            VALUES (?, ?)
+                            ON CONFLICT(alias) DO NOTHING
+                            """,
+                            (old_ticker, row["id"]),
+                        )
                     previous_price = int(row["price_cents"])
                     if row["status"] == "delisted":
                         price_cents = item.target_price_cents
@@ -201,13 +299,14 @@ class MarketDatabase:
                     connection.execute(
                         """
                         UPDATE stocks
-                        SET title = ?, link = ?, raw_score = ?, rank = ?,
+                        SET ticker = ?, title = ?, link = ?, raw_score = ?, rank = ?,
                             list_size = ?, price_cents = ?,
                             previous_price_cents = ?, status = 'active',
                             missing_count = 0, last_seen_at = ?, updated_at = ?
                         WHERE id = ?
                         """,
                         (
+                            ticker,
                             item.title,
                             item.link,
                             item.raw_score,
@@ -307,10 +406,7 @@ class MarketDatabase:
         return [dict(row) for row in rows]
 
     def stock(self, ticker: str) -> dict[str, Any] | None:
-        row = self.connection.execute(
-            "SELECT * FROM stocks WHERE ticker = ? COLLATE NOCASE",
-            (ticker.strip(),),
-        ).fetchone()
+        row = self._stock_by_ticker(self.connection, ticker)
         return dict(row) if row else None
 
     def quote_history(self, stock_id: int, limit: int = 16) -> list[int]:
@@ -426,10 +522,7 @@ class MarketDatabase:
             raise TradeError("买入金额必须大于 0")
 
         with self._transaction() as connection:
-            stock = connection.execute(
-                "SELECT * FROM stocks WHERE ticker = ? COLLATE NOCASE",
-                (ticker.strip(),),
-            ).fetchone()
+            stock = self._stock_by_ticker(connection, ticker)
             if not stock:
                 raise TradeError("没有找到这个股票代码")
             if stock["status"] != "active":
@@ -549,10 +642,7 @@ class MarketDatabase:
         fee_rate: float,
     ) -> dict[str, Any]:
         with self._transaction() as connection:
-            stock = connection.execute(
-                "SELECT * FROM stocks WHERE ticker = ? COLLATE NOCASE",
-                (ticker.strip(),),
-            ).fetchone()
+            stock = self._stock_by_ticker(connection, ticker)
             if not stock:
                 raise TradeError("没有找到这个股票代码")
             account = self._ensure_account(
@@ -719,6 +809,43 @@ class MarketDatabase:
             (group_id, max(1, limit)),
         ).fetchall()
         return [dict(row) for row in rows]
+
+    def group_ids_with_accounts(self) -> list[str]:
+        rows = self.connection.execute(
+            "SELECT DISTINCT group_id FROM accounts ORDER BY group_id"
+        ).fetchall()
+        return [str(row["group_id"]) for row in rows]
+
+    def analysis_members(
+        self,
+        group_id: str,
+        member_limit: int = 20,
+        position_limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        members = self.leaderboard(group_id, member_limit)
+        for member in members:
+            rows = self.connection.execute(
+                """
+                SELECT
+                    s.ticker, s.title, p.shares, p.average_cost_cents,
+                    s.price_cents, s.status
+                FROM positions p
+                JOIN stocks s ON s.id = p.stock_id
+                WHERE p.group_id = ? AND p.user_id = ?
+                ORDER BY p.shares * s.price_cents DESC
+                LIMIT ?
+                """,
+                (group_id, member["user_id"], max(1, position_limit)),
+            ).fetchall()
+            positions: list[dict[str, Any]] = []
+            for row in rows:
+                position = dict(row)
+                position["profit_cents"] = int(row["shares"]) * (
+                    int(row["price_cents"]) - int(row["average_cost_cents"])
+                )
+                positions.append(position)
+            member["positions"] = positions
+        return members
 
     def close(self) -> None:
         self.connection.close()

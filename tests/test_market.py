@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from astrbot_plugin_hot_market.market import (
+    extract_ticker_keywords,
     normalize_title,
     parse_market_payload,
     resolve_market,
@@ -28,6 +29,14 @@ class MarketRulesTest(unittest.TestCase):
             ticker_for("weibo", second),
         )
         self.assertTrue(ticker_for("weibo", first).startswith("WB-"))
+
+    def test_keyword_ticker_is_short_and_readable(self) -> None:
+        keyword = extract_ticker_keywords("小米汽车发布全新车型")
+        ticker = ticker_for("weibo", "小米汽车发布全新车型")
+        self.assertTrue(keyword)
+        self.assertLessEqual(len(keyword), 8)
+        self.assertEqual(ticker, f"WB-{keyword}")
+        self.assertIn("小米", ticker)
 
     def test_rank_price_is_monotonic(self) -> None:
         prices = [target_price_cents(rank, 30) for rank in range(1, 31)]

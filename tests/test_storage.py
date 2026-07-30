@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tempfile
+from dataclasses import replace
 import unittest
 from pathlib import Path
 
@@ -83,6 +84,28 @@ class StorageTest(unittest.TestCase):
             )["positions"],
             [],
         )
+
+    def test_ticker_collision_gets_stable_suffix(self) -> None:
+        first, second = sample_items()[:2]
+        second = replace(second, ticker=first.ticker)
+        self.database.apply_market_snapshot("weibo", [first, second])
+        tickers = [row["ticker"] for row in self.database.market_rows("weibo", 10)]
+        self.assertEqual(len(set(tickers)), 2)
+        self.assertIn(first.ticker, tickers)
+        self.assertTrue(any(ticker.startswith(f"{first.ticker}-") for ticker in tickers))
+
+    def test_legacy_ticker_alias_survives_keyword_migration(self) -> None:
+        current = sample_items()[0]
+        legacy = replace(current, ticker="WB-ABC12345")
+        self.database.apply_market_snapshot("weibo", [legacy])
+        legacy_stock = self.database.stock(legacy.ticker)
+
+        self.database.apply_market_snapshot("weibo", [current])
+        migrated = self.database.stock(current.ticker)
+        via_legacy_alias = self.database.stock(legacy.ticker)
+        self.assertEqual(migrated["id"], legacy_stock["id"])
+        self.assertEqual(via_legacy_alias["id"], migrated["id"])
+        self.assertEqual(migrated["ticker"], current.ticker)
 
     def test_position_limit_is_enforced(self) -> None:
         self.database.apply_market_snapshot("weibo", sample_items())

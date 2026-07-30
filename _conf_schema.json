@@ -65,6 +65,24 @@
     "hint": "开启后用户查询行情时调用 AstrBot 当前配置的 t2i 服务；失败会自动回退为文本。",
     "default": true
   },
+  "daily_analysis_enabled": {
+    "description": "启用每日大模型收盘复盘",
+    "type": "bool",
+    "hint": "每天使用目标群会话当前的默认聊天模型分析成员持仓，并主动发送到已授权且已有账户的群。",
+    "default": false
+  },
+  "daily_analysis_time": {
+    "description": "每日复盘发送时间",
+    "type": "string",
+    "hint": "使用 HH:MM 格式，按 AstrBot 服务器本地时区运行，例如 20:30。",
+    "default": "20:00"
+  },
+  "daily_analysis_member_limit": {
+    "description": "每日复盘成员上限",
+    "type": "int",
+    "hint": "按总资产排名选取成员，范围 1～50，避免群人数过多导致模型上下文过长。",
+    "default": 20
+  },
   "delist_after_misses": {
     "description": "连续离榜几次后退市",
     "type": "int",

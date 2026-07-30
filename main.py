@@ -22,9 +22,12 @@ from .parsing import parse_money_to_cents
 from .permissions import is_group_umo_allowed, normalize_allowed_umos
 from .renderer import (
     MARKET_TEMPLATE,
+    STOCK_DETAIL_TEMPLATE,
+    compact_money,
     format_market_text,
     money,
     prepare_dashboard,
+    prepare_stock_detail,
 )
 from .storage import MarketDatabase, TradeError
 
@@ -190,7 +193,7 @@ class HotMarketPlugin(Star):
 
     async def _run_daily_analyses(self) -> None:
         async with self._database_lock:
-            account_groups = set(self.database.group_ids_with_accounts())
+            account_groups = set(self.database.group_ids_with_participants())
         if "*" in self.allowed_group_umos:
             target_umos = account_groups
         else:
@@ -346,6 +349,34 @@ class HotMarketPlugin(Star):
             )
         return self._image_component(result)
 
+    async def _render_stock_detail(
+        self,
+        stock: dict[str, Any],
+        history: list[int],
+    ) -> Comp.Image:
+        render_data = prepare_stock_detail(stock, history)
+        try:
+            result = await self.html_render(
+                STOCK_DETAIL_TEMPLATE,
+                render_data,
+                return_url=False,
+                options={
+                    "full_page": True,
+                    "type": "png",
+                    "device_scale_factor_level": "high",
+                    "animations": "disabled",
+                    "scale": "css",
+                    "timeout": 60_000,
+                },
+            )
+        except Exception:
+            result = await self.html_render(
+                STOCK_DETAIL_TEMPLATE,
+                render_data,
+                return_url=False,
+            )
+        return self._image_component(result)
+
     @staticmethod
     def _image_component(result: Any) -> Comp.Image:
         if isinstance(result, (bytes, bytearray)):
@@ -414,6 +445,16 @@ class HotMarketPlugin(Star):
                     history = []
             if not stock:
                 raise TradeError("没有找到这个股票代码")
+            if self.render_market_image:
+                try:
+                    image = await self._render_stock_detail(stock, history)
+                    yield event.chain_result([image])
+                    return
+                except Exception as exc:
+                    logger.warning(
+                        "热市股票详情图片渲染失败，回退文本："
+                        f"{type(exc).__name__}: {exc}"
+                    )
             previous = int(stock["previous_price_cents"])
             current = int(stock["price_cents"])
             percentage = (current - previous) / previous * 100 if previous else 0
@@ -425,7 +466,7 @@ class HotMarketPlugin(Star):
                 f"现价：{money(current)}（{percentage:+.1f}%）\n"
                 f"排名：{rank_text}\n"
                 f"状态：{stock['status']}\n"
-                f"近期香港：{history_text or '暂无'}\n"
+                f"近期价格：{history_text or '暂无'}\n"
                 f"链接：{stock['link'] or '无'}"
             )
         except TradeError as exc:
@@ -539,10 +580,10 @@ class HotMarketPlugin(Star):
             total_profit = int(portfolio["net_asset_cents"]) - self.starting_cash_cents
             lines = [
                 f"💼 {user_name} 的热市账户",
-                f"总资产：{money(portfolio['net_asset_cents'])} 热币",
-                f"现金：{money(portfolio['cash_cents'])}",
-                f"持仓市值：{money(portfolio['market_value_cents'])}",
-                f"累计浮动：{money(total_profit)}",
+                f"总资产：{compact_money(portfolio['net_asset_cents'])} 热币",
+                f"现金：{compact_money(portfolio['cash_cents'])}",
+                f"持仓市值：{compact_money(portfolio['market_value_cents'])}",
+                f"累计浮动：{compact_money(total_profit)}",
             ]
             positions = portfolio["positions"]
             if positions:
@@ -550,8 +591,8 @@ class HotMarketPlugin(Star):
                 for item in positions[:12]:
                     lines.append(
                         f"• {item['ticker']} {item['shares']}股 "
-                        f"市值{money(item['value_cents'])} "
-                        f"盈亏{money(item['profit_cents'])}"
+                        f"市值{compact_money(item['value_cents'])} "
+                        f"盈亏{compact_money(item['profit_cents'])}"
                     )
             else:
                 lines.append("\n暂无持仓，使用 /热市 行情 查看股票。")
@@ -569,7 +610,7 @@ class HotMarketPlugin(Star):
         async with self._database_lock:
             rows = self.database.leaderboard(group_id, 10)
         if not rows:
-            yield event.plain_result("当前还没有玩家开户。")
+            yield event.plain_result("当前还没有成员完成交易。")
             return
         lines = ["🏆 热搜富豪榜"]
         for index, row in enumerate(rows, start=1):

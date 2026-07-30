@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from astrbot_plugin_hot_market.market import (
+    bullish_drift_price_cents,
     extract_ticker_keywords,
     normalize_title,
     parse_market_payload,
@@ -34,7 +35,7 @@ class MarketRulesTest(unittest.TestCase):
         keyword = extract_ticker_keywords("小米汽车发布全新车型")
         ticker = ticker_for("weibo", "小米汽车发布全新车型")
         self.assertTrue(keyword)
-        self.assertLessEqual(len(keyword), 8)
+        self.assertLessEqual(len(keyword), 5)
         self.assertEqual(ticker, f"WB-{keyword}")
         self.assertIn("小米", ticker)
 
@@ -47,6 +48,11 @@ class MarketRulesTest(unittest.TestCase):
     def test_smoothing_limits_one_tick_move(self) -> None:
         self.assertEqual(smooth_price_cents(1_000, 10_000), 1_250)
         self.assertEqual(smooth_price_cents(10_000, 100), 7_500)
+
+    def test_bullish_drift_moves_slightly_and_respects_cap(self) -> None:
+        self.assertEqual(bullish_drift_price_cents(10_000, 10_000), 10_002)
+        self.assertEqual(bullish_drift_price_cents(10_199, 10_000), 10_200)
+        self.assertEqual(bullish_drift_price_cents(10_200, 10_000), 10_200)
 
     def test_generic_api_payload_parser(self) -> None:
         payload = {

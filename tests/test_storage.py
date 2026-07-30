@@ -107,6 +107,53 @@ class StorageTest(unittest.TestCase):
         self.assertEqual(via_legacy_alias["id"], migrated["id"])
         self.assertEqual(migrated["ticker"], current.ticker)
 
+    def test_unchanged_ranks_drift_up_without_flat_market(self) -> None:
+        items = sample_items()
+        self.database.apply_market_snapshot("weibo", items)
+        before = {
+            row["ticker"]: int(row["price_cents"])
+            for row in self.database.market_rows("weibo", 20)
+        }
+
+        self.database.apply_market_snapshot("weibo", items)
+        after = {
+            row["ticker"]: int(row["price_cents"])
+            for row in self.database.market_rows("weibo", 20)
+        }
+
+        self.assertEqual(before.keys(), after.keys())
+        self.assertTrue(all(after[ticker] > price for ticker, price in before.items()))
+
+    def test_rankings_and_analysis_only_include_trading_participants(self) -> None:
+        self.database.apply_market_snapshot("weibo", sample_items())
+        stock = self.database.market_rows("weibo", 10)[0]
+        self.database.portfolio(
+            "group",
+            "spectator",
+            "只看不买",
+            100_000,
+        )
+        self.assertEqual(self.database.leaderboard("group"), [])
+        self.assertEqual(self.database.analysis_members("group"), [])
+        self.assertEqual(self.database.group_ids_with_participants(), [])
+
+        self.database.buy(
+            group_id="group",
+            user_id="trader",
+            user_name="参与者",
+            ticker=stock["ticker"],
+            budget_cents=30_000,
+            starting_cash_cents=100_000,
+            fee_rate=0.005,
+            max_position_ratio=0.35,
+        )
+
+        ranking = self.database.leaderboard("group")
+        analysis = self.database.analysis_members("group")
+        self.assertEqual([row["user_id"] for row in ranking], ["trader"])
+        self.assertEqual([row["user_id"] for row in analysis], ["trader"])
+        self.assertEqual(self.database.group_ids_with_participants(), ["group"])
+
     def test_position_limit_is_enforced(self) -> None:
         self.database.apply_market_snapshot("weibo", sample_items())
         stock = self.database.market_rows("weibo", 10)[0]

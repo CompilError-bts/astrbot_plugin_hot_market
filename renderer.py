@@ -206,8 +206,134 @@ body {
 """
 
 
+STOCK_DETAIL_TEMPLATE = """
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  width: 860px;
+  padding: 32px;
+  color: #eef4ff;
+  background:
+    radial-gradient(circle at 86% 2%, rgba(71, 127, 255, .34), transparent 30%),
+    radial-gradient(circle at 8% 94%, rgba(33, 214, 163, .19), transparent 32%),
+    linear-gradient(145deg, #080d1b, #111a31 56%, #091524);
+  font-family: "Noto Sans SC", "Microsoft YaHei", "PingFang SC", sans-serif;
+}
+.top { display: flex; align-items: flex-start; justify-content: space-between; gap: 22px; }
+.market { color: #78aaff; font-size: 12px; font-weight: 900; letter-spacing: 1.4px; }
+.title { margin-top: 9px; font-size: 27px; font-weight: 900; line-height: 1.3; }
+.ticker {
+  flex: 0 0 auto; padding: 10px 16px; border-radius: 12px;
+  color: #071323; background: linear-gradient(135deg, #88bdff, #61e5ca);
+  font-size: 23px; font-weight: 950; letter-spacing: .8px;
+  box-shadow: 0 10px 28px rgba(87, 190, 218, .22);
+}
+.quote {
+  margin-top: 22px; padding: 21px 23px; border-radius: 20px;
+  border: 1px solid rgba(138, 166, 220, .18);
+  background: linear-gradient(145deg, rgba(26, 41, 75, .93), rgba(14, 25, 48, .90));
+  box-shadow: 0 18px 48px rgba(0, 0, 0, .24);
+}
+.quote-head { display: flex; align-items: flex-end; justify-content: space-between; }
+.price { font-size: 45px; font-weight: 950; font-variant-numeric: tabular-nums; }
+.price small { color: #7d8ca6; font-size: 13px; font-weight: 700; }
+.change { font-size: 23px; font-weight: 950; font-variant-numeric: tabular-nums; }
+.up { color: #39dba2; }
+.down { color: #fb7185; }
+.flat { color: #a1aec3; }
+.subline { margin-top: 6px; color: #8391a8; font-size: 12px; }
+.chart-wrap { position: relative; margin-top: 18px; height: 238px; }
+.chart-label { position: absolute; right: 5px; color: #6f7e96; font-size: 10px; }
+.chart-label.high { top: 2px; }
+.chart-label.low { bottom: 1px; }
+.chart { width: 100%; height: 220px; margin-top: 9px; }
+.chart .grid { stroke: rgba(144, 165, 202, .10); stroke-width: 1; }
+.chart .area { opacity: .16; }
+.chart .line { fill: none; stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; }
+.chart.up .line { stroke: #39dba2; }
+.chart.up .area { fill: #39dba2; }
+.chart.down .line { stroke: #fb7185; }
+.chart.down .area { fill: #fb7185; }
+.chart.flat .line { stroke: #9ba9bd; }
+.chart.flat .area { fill: #9ba9bd; }
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 17px; }
+.stat {
+  padding: 13px 12px; border-radius: 14px; text-align: center;
+  border: 1px solid rgba(135, 163, 211, .14); background: rgba(8, 15, 30, .32);
+}
+.stat-label { color: #75849d; font-size: 10px; }
+.stat-value { margin-top: 6px; font-size: 15px; font-weight: 900; }
+.slogan {
+  margin-top: 18px; padding: 14px 17px; border-left: 3px solid #77aaff;
+  color: #b7c5db; background: rgba(73, 116, 208, .08); border-radius: 0 12px 12px 0;
+  font-size: 14px; font-weight: 750;
+}
+.footer {
+  margin-top: 18px; display: flex; justify-content: space-between;
+  color: #71809a; font-size: 11px;
+}
+.footer strong { color: #8fbaff; }
+</style>
+</head>
+<body>
+  <div class="top">
+    <div>
+      <div class="market">{{ market_name }} MARKET · {{ rank_text }} · {{ status_text }}</div>
+      <div class="title">{{ title }}</div>
+    </div>
+    <div class="ticker">{{ ticker }}</div>
+  </div>
+  <section class="quote">
+    <div class="quote-head">
+      <div>
+        <div class="price">{{ price }} <small>热币</small></div>
+        <div class="subline">最近一轮价格变化</div>
+      </div>
+      <div class="change {{ change_class }}">{{ change }}</div>
+    </div>
+    <div class="chart-wrap">
+      <div class="chart-label high">高 {{ high }}</div>
+      <div class="chart-label low">低 {{ low }}</div>
+      <svg class="chart {{ trend_class }}" viewBox="0 0 720 220" aria-label="近期价格走势">
+        <line class="grid" x1="18" y1="18" x2="702" y2="18"></line>
+        <line class="grid" x1="18" y1="110" x2="702" y2="110"></line>
+        <line class="grid" x1="18" y1="202" x2="702" y2="202"></line>
+        <polygon class="area" points="{{ area }}"></polygon>
+        <polyline class="line" points="{{ sparkline }}"></polyline>
+      </svg>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="stat-label">当前排名</div><div class="stat-value">{{ rank_text }}</div></div>
+      <div class="stat"><div class="stat-label">区间涨跌</div><div class="stat-value {{ trend_class }}">{{ range_change }}</div></div>
+      <div class="stat"><div class="stat-label">区间最高</div><div class="stat-value">{{ high }}</div></div>
+      <div class="stat"><div class="stat-label">区间最低</div><div class="stat-value">{{ low }}</div></div>
+    </div>
+  </section>
+  <div class="slogan">“{{ slogan }}”</div>
+  <div class="footer">
+    <span><strong>快捷买入</strong> /热市 买入 {{ ticker }} 100</span>
+    <span>{{ updated_at }} · 近 {{ point_count }} 轮 · 虚拟盘仅供娱乐</span>
+  </div>
+</body>
+</html>
+"""
+
 def money(cents: int) -> str:
     return f"{cents / 100:,.2f}"
+
+
+def compact_money(cents: int) -> str:
+    amount = cents / 100
+    if abs(amount) >= 10_000:
+        value = f"{amount / 10_000:.2f}".rstrip("0").rstrip(".")
+        return f"{value}万"
+    return f"{amount:,.2f}"
 
 
 def change_percent(current_cents: int, previous_cents: int) -> float:
@@ -240,6 +366,76 @@ def sparkline_points(
             y = padding + usable_height * (maximum - price) / (maximum - minimum)
         points.append(f"{x:.1f},{y:.1f}")
     return " ".join(points)
+
+
+def _movement_class(percentage: float) -> str:
+    if percentage > 0.005:
+        return "up"
+    if percentage < -0.005:
+        return "down"
+    return "flat"
+
+
+def _signed_percent(percentage: float) -> str:
+    sign = "+" if percentage > 0 else ""
+    return f"{sign}{percentage:.1f}%"
+
+
+def prepare_stock_detail(
+    stock: dict[str, Any],
+    history: list[int],
+) -> dict[str, Any]:
+    current = int(stock["price_cents"])
+    previous = int(stock["previous_price_cents"])
+    prices = [int(value) for value in history] or [current]
+    if prices[-1] != current:
+        prices.append(current)
+    latest_percentage = change_percent(current, previous)
+    range_percentage = change_percent(current, prices[0])
+    points = sparkline_points(prices, width=720, height=220, padding=18)
+    status_text = {
+        "active": "正常交易",
+        "fading": "离榜观察",
+        "delisted": "已退市",
+    }.get(str(stock["status"]), str(stock["status"]))
+    rank = stock.get("rank")
+    rank_text = f"榜单 #{rank}" if rank is not None else "已离榜"
+    slogans = (
+        "热搜有保质期，走势记录每一次围观。",
+        "排名是基本面，讨论度就是今日成交量。",
+        "围观群众敲钟，话题情绪定价。",
+        "看懂曲线之前，先记住它为什么上热搜。",
+        "热点会换，代码要短，仓位要有趣。",
+    )
+    ticker = str(stock["ticker"])
+    slogan = slogans[sum(ord(character) for character in ticker) % len(slogans)]
+    raw_updated_at = str(stock.get("updated_at") or "")
+    try:
+        updated_at = datetime.fromisoformat(raw_updated_at).astimezone().strftime(
+            "%m-%d %H:%M"
+        )
+    except ValueError:
+        updated_at = raw_updated_at or "尚未更新"
+    trend_class = _movement_class(range_percentage)
+    return {
+        "market_name": f"{MARKETS[str(stock['source'])].name}股市",
+        "rank_text": rank_text,
+        "status_text": html.escape(status_text),
+        "title": html.escape(str(stock["title"])),
+        "ticker": html.escape(ticker),
+        "price": money(current),
+        "change": _signed_percent(latest_percentage),
+        "change_class": _movement_class(latest_percentage),
+        "range_change": _signed_percent(range_percentage),
+        "trend_class": trend_class,
+        "high": money(max(prices)),
+        "low": money(min(prices)),
+        "sparkline": points,
+        "area": f"18,202 {points} 702,202",
+        "slogan": slogan,
+        "point_count": len(prices),
+        "updated_at": updated_at,
+    }
 
 
 def prepare_dashboard(

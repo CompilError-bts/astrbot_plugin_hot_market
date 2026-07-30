@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -8,7 +9,12 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from .market import HotItem, smooth_price_cents
+from .market import (
+    BULLISH_ADVANCE_RATIO,
+    HotItem,
+    bullish_drift_price_cents,
+    smooth_price_cents,
+)
 
 
 class TradeError(RuntimeError):
@@ -231,6 +237,74 @@ class MarketDatabase:
                 (source,),
             ).fetchall()
             existing = {row["normalized_title"]: row for row in existing_rows}
+            price_plan: dict[str, int] = {}
+            active_updates: list[tuple[HotItem, sqlite3.Row]] = []
+
+            for item in items:
+                row = existing.get(item.normalized_title)
+                if row is None or row["status"] == "delisted":
+                    price_plan[item.normalized_title] = item.target_price_cents
+                    continue
+                previous_price = int(row["price_cents"])
+                price_cents = smooth_price_cents(
+                    previous_price,
+                    item.target_price_cents,
+                )
+                previous_rank = row["rank"]
+                if previous_rank is not None and item.rank <= int(previous_rank):
+                    price_cents = max(
+                        price_cents,
+                        bullish_drift_price_cents(
+                            previous_price,
+                            item.target_price_cents,
+                        ),
+                    )
+                price_plan[item.normalized_title] = price_cents
+                active_updates.append((item, row))
+
+            desired_gainers = math.ceil(
+                len(active_updates) * BULLISH_ADVANCE_RATIO
+            )
+            current_gainers = sum(
+                price_plan[item.normalized_title] > int(row["price_cents"])
+                for item, row in active_updates
+            )
+            bullish_candidates: list[
+                tuple[int, int, HotItem, sqlite3.Row]
+            ] = []
+            for item, row in active_updates:
+                previous_price = int(row["price_cents"])
+                if price_plan[item.normalized_title] > previous_price:
+                    continue
+                previous_rank = row["rank"]
+                rank_drop = (
+                    item.rank - int(previous_rank)
+                    if previous_rank is not None
+                    else 99
+                )
+                drifted = bullish_drift_price_cents(
+                    previous_price,
+                    item.target_price_cents,
+                )
+                if rank_drop <= 1 and drifted > previous_price:
+                    bullish_candidates.append(
+                        (
+                            max(0, rank_drop),
+                            abs(item.target_price_cents - previous_price),
+                            item,
+                            row,
+                        )
+                    )
+            bullish_candidates.sort(key=lambda candidate: candidate[:2])
+            for _, _, item, row in bullish_candidates:
+                if current_gainers >= desired_gainers:
+                    break
+                previous_price = int(row["price_cents"])
+                price_plan[item.normalized_title] = bullish_drift_price_cents(
+                    previous_price,
+                    item.target_price_cents,
+                )
+                current_gainers += 1
 
             for item in items:
                 row = existing.get(item.normalized_title)
@@ -288,13 +362,7 @@ class MarketDatabase:
                             (old_ticker, row["id"]),
                         )
                     previous_price = int(row["price_cents"])
-                    if row["status"] == "delisted":
-                        price_cents = item.target_price_cents
-                    else:
-                        price_cents = smooth_price_cents(
-                            previous_price,
-                            item.target_price_cents,
-                        )
+                    price_cents = price_plan[item.normalized_title]
                     stock_id = int(row["id"])
                     connection.execute(
                         """
@@ -802,6 +870,12 @@ class MarketDatabase:
                 ON p.group_id = a.group_id AND p.user_id = a.user_id
             LEFT JOIN stocks s ON s.id = p.stock_id
             WHERE a.group_id = ?
+              AND EXISTS (
+                  SELECT 1
+                  FROM orders o
+                  WHERE o.group_id = a.group_id
+                    AND o.user_id = a.user_id
+              )
             GROUP BY a.group_id, a.user_id
             ORDER BY net_asset_cents DESC, a.updated_at ASC
             LIMIT ?
@@ -810,9 +884,9 @@ class MarketDatabase:
         ).fetchall()
         return [dict(row) for row in rows]
 
-    def group_ids_with_accounts(self) -> list[str]:
+    def group_ids_with_participants(self) -> list[str]:
         rows = self.connection.execute(
-            "SELECT DISTINCT group_id FROM accounts ORDER BY group_id"
+            "SELECT DISTINCT group_id FROM orders ORDER BY group_id"
         ).fetchall()
         return [str(row["group_id"]) for row in rows]
 

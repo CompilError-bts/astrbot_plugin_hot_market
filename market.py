@@ -101,7 +101,8 @@ def normalize_title(title: str) -> str:
     return re.sub(r"[\W_]+", "", normalized, flags=re.UNICODE)
 
 
-MAX_TICKER_KEYWORD_CHARS = 8
+MAX_TICKER_KEYWORD_CHARS = 5
+BULLISH_ADVANCE_RATIO = 0.6
 
 
 def _clean_ticker_keyword(value: str) -> str:
@@ -112,7 +113,7 @@ def extract_ticker_keywords(title: str, max_chars: int = MAX_TICKER_KEYWORD_CHAR
     """Extract a short readable code with jieba's mature TF-IDF algorithm."""
     weighted_keywords = analyse.extract_tags(
         title,
-        topK=4,
+        topK=3,
         withWeight=False,
     )
     candidates = list(weighted_keywords)
@@ -165,6 +166,25 @@ def smooth_price_cents(
     lower = max(100, math.floor(previous_cents * (1 - movement_limit)))
     upper = math.ceil(previous_cents * (1 + movement_limit))
     return max(lower, min(upper, blended))
+
+
+def bullish_drift_price_cents(
+    previous_cents: int,
+    target_cents: int,
+    drift_rate: float = 0.0002,
+    maximum_target_premium: float = 0.02,
+) -> int:
+    """Apply a tiny positive drift without disconnecting price from rank."""
+    if previous_cents <= 0:
+        return target_cents
+    ceiling = max(
+        target_cents,
+        math.ceil(target_cents * (1 + maximum_target_premium)),
+    )
+    if previous_cents >= ceiling:
+        return previous_cents
+    drift = max(1, round(previous_cents * drift_rate))
+    return min(ceiling, previous_cents + drift)
 
 
 def parse_market_payload(

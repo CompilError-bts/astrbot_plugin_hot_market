@@ -5,8 +5,10 @@ from datetime import UTC, datetime
 
 from astrbot_plugin_hot_market.renderer import (
     change_percent,
+    compact_money,
     money,
     prepare_dashboard,
+    prepare_stock_detail,
     sparkline_points,
 )
 
@@ -14,6 +16,12 @@ from astrbot_plugin_hot_market.renderer import (
 class RendererTest(unittest.TestCase):
     def test_money(self) -> None:
         self.assertEqual(money(123_456), "1,234.56")
+
+    def test_compact_money_uses_ten_thousand_unit(self) -> None:
+        self.assertEqual(compact_money(999_999), "9,999.99")
+        self.assertEqual(compact_money(1_000_000), "1万")
+        self.assertEqual(compact_money(1_250_000), "1.25万")
+        self.assertEqual(compact_money(-1_250_000), "-1.25万")
 
     def test_change_percent(self) -> None:
         self.assertAlmostEqual(change_percent(125, 100), 25.0)
@@ -49,6 +57,28 @@ class RendererTest(unittest.TestCase):
         self.assertEqual(len(flat.split()), 3)
         self.assertEqual(len(rising.split()), 3)
         self.assertNotEqual(flat, rising)
+
+    def test_stock_detail_contains_large_trend_chart_data(self) -> None:
+        detail = prepare_stock_detail(
+            {
+                "source": "weibo",
+                "rank": 1,
+                "status": "active",
+                "title": "小米汽车发布新车",
+                "ticker": "WB-小米汽车",
+                "price_cents": 1_200,
+                "previous_price_cents": 1_100,
+                "updated_at": "2026-07-30T13:30:00+00:00",
+            },
+            [1_000, 1_100, 1_200],
+        )
+        self.assertEqual(detail["ticker"], "WB-小米汽车")
+        self.assertEqual(detail["rank_text"], "榜单 #1")
+        self.assertEqual(detail["change_class"], "up")
+        self.assertEqual(detail["trend_class"], "up")
+        self.assertEqual(len(detail["sparkline"].split()), 3)
+        self.assertTrue(detail["area"].startswith("18,202 "))
+        self.assertEqual(detail["point_count"], 3)
 
 
 if __name__ == "__main__":

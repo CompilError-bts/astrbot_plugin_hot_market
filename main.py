@@ -65,6 +65,9 @@ class HotMarketPlugin(Star):
             min(1.0, float(config.get("max_position_ratio", 0.35))),
         )
         self.render_market_image = bool(config.get("render_market_image", True))
+        self.delist_alert_enabled = bool(
+            config.get("delist_alert_enabled", True)
+        )
         self.delist_after_misses = max(
             1,
             min(12, int(config.get("delist_after_misses", 3))),
@@ -275,6 +278,54 @@ class HotMarketPlugin(Star):
         if latest is None or datetime.now(UTC) - latest > stale_after:
             await self._collect_all()
 
+    async def _delist_warning_chains(
+        self,
+        event: AstrMessageEvent,
+    ) -> list[list[Any]]:
+        if not self.delist_alert_enabled:
+            return []
+        try:
+            await self._ensure_fresh()
+            async with self._database_lock:
+                alerts = self.database.claim_delist_alerts(
+                    event.unified_msg_origin
+                )
+        except Exception as exc:
+            logger.warning(
+                "检查持仓股退榜预警失败："
+                f"{type(exc).__name__}: {exc}"
+            )
+            return []
+
+        chains: list[list[Any]] = []
+        for alert in alerts:
+            market_name = MARKETS[str(alert["source"])].name
+            chain: list[Any] = [
+                Comp.Plain(
+                    "⚠️ 持仓股退榜预警\n"
+                    f"{alert['ticker']} {alert['title']} "
+                    f"已退出{market_name}热搜榜。\n"
+                    "持仓成员：\u200b"
+                )
+            ]
+            for index, member in enumerate(alert["members"]):
+                if index:
+                    chain.append(Comp.Plain("\u200b、\u200b"))
+                chain.append(Comp.At(qq=str(member["user_id"])))
+            if alert["status"] == "delisted":
+                alert_tail = (
+                    "\u200b\n该股已完成退市，价格归为 1 热币。"
+                    "同一次离榜只提醒一次，请留意持仓。"
+                )
+            else:
+                alert_tail = (
+                    "\u200b\n该股已进入离榜观察，期间每轮价格下调 3%。"
+                    "同一次离榜只提醒一次，请留意持仓。"
+                )
+            chain.append(Comp.Plain(alert_tail))
+            chains.append(chain)
+        return chains
+
     def _identity(self, event: AstrMessageEvent) -> tuple[str, str, str]:
         group_id = event.unified_msg_origin
         user_id = event.get_sender_id()
@@ -407,6 +458,8 @@ class HotMarketPlugin(Star):
             yield event.plain_result(denied)
             return
         try:
+            for chain in await self._delist_warning_chains(event):
+                yield event.chain_result(chain)
             market_rows, updated_at = await self._market_view(market)
             if not any(market_rows.values()):
                 yield event.plain_result(
@@ -436,6 +489,8 @@ class HotMarketPlugin(Star):
             yield event.plain_result(denied)
             return
         try:
+            for chain in await self._delist_warning_chains(event):
+                yield event.chain_result(chain)
             await self._ensure_fresh()
             async with self._database_lock:
                 stock = self.database.stock(ticker)
@@ -569,6 +624,8 @@ class HotMarketPlugin(Star):
             yield event.plain_result(denied)
             return
         try:
+            for chain in await self._delist_warning_chains(event):
+                yield event.chain_result(chain)
             group_id, user_id, user_name = self._identity(event)
             async with self._database_lock:
                 portfolio = self.database.portfolio(
@@ -606,6 +663,8 @@ class HotMarketPlugin(Star):
         if denied := self._access_denied_message(event):
             yield event.plain_result(denied)
             return
+        for chain in await self._delist_warning_chains(event):
+            yield event.chain_result(chain)
         group_id = event.unified_msg_origin
         async with self._database_lock:
             rows = self.database.leaderboard(group_id, 10)
@@ -645,6 +704,8 @@ class HotMarketPlugin(Star):
         if denied := self._access_denied_message(event):
             yield event.plain_result(denied)
             return
+        for chain in await self._delist_warning_chains(event):
+            yield event.chain_result(chain)
         async with self._database_lock:
             states = {row["source"]: row for row in self.database.source_states()}
         lines = [
@@ -655,6 +716,11 @@ class HotMarketPlugin(Star):
                 f"每日复盘：{self.daily_analysis_time_text}"
                 if self.daily_analysis_enabled
                 else "每日复盘：未启用"
+            ),
+            (
+                "持仓退榜预警：已启用"
+                if self.delist_alert_enabled
+                else "持仓退榜预警：未启用"
             ),
         ]
         for source in self.enabled_markets:

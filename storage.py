@@ -127,6 +127,13 @@ class MarketDatabase:
                 realized_profit_cents INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS delist_alerts (
+                group_id TEXT NOT NULL,
+                stock_id INTEGER NOT NULL REFERENCES stocks(id) ON DELETE CASCADE,
+                alerted_at TEXT NOT NULL,
+                PRIMARY KEY(group_id, stock_id)
+            );
             """
         )
         self.connection.commit()
@@ -396,6 +403,10 @@ class MarketDatabase:
                     """,
                     (stock_id, captured_at, price_cents, item.rank),
                 )
+                connection.execute(
+                    "DELETE FROM delist_alerts WHERE stock_id = ?",
+                    (stock_id,),
+                )
 
             for normalized_title, row in existing.items():
                 if normalized_title in seen_titles or row["status"] == "delisted":
@@ -410,7 +421,7 @@ class MarketDatabase:
                 price_cents = (
                     100
                     if status == "delisted"
-                    else max(100, round(previous_price * 0.75))
+                    else max(100, round(previous_price * 0.97))
                 )
                 connection.execute(
                     """
@@ -489,6 +500,71 @@ class MarketDatabase:
             (stock_id, max(2, limit)),
         ).fetchall()
         return [int(row["price_cents"]) for row in reversed(rows)]
+
+    def claim_delist_alerts(self, group_id: str) -> list[dict[str, Any]]:
+        """Atomically claim one alert per off-list stock for this group."""
+        alerted_at = utc_now_text()
+        with self._transaction() as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    s.id AS stock_id,
+                    s.ticker,
+                    s.title,
+                    s.source,
+                    s.status,
+                    p.user_id,
+                    a.user_name,
+                    p.shares
+                FROM positions p
+                JOIN stocks s ON s.id = p.stock_id
+                JOIN accounts a
+                    ON a.group_id = p.group_id AND a.user_id = p.user_id
+                LEFT JOIN delist_alerts d
+                    ON d.group_id = p.group_id AND d.stock_id = p.stock_id
+                WHERE p.group_id = ?
+                  AND p.shares > 0
+                  AND s.status IN ('fading', 'delisted')
+                  AND d.stock_id IS NULL
+                ORDER BY s.id, p.user_id
+                """,
+                (group_id,),
+            ).fetchall()
+
+            grouped: dict[int, dict[str, Any]] = {}
+            for row in rows:
+                stock_id = int(row["stock_id"])
+                alert = grouped.setdefault(
+                    stock_id,
+                    {
+                        "stock_id": stock_id,
+                        "ticker": str(row["ticker"]),
+                        "title": str(row["title"]),
+                        "source": str(row["source"]),
+                        "status": str(row["status"]),
+                        "members": [],
+                    },
+                )
+                alert["members"].append(
+                    {
+                        "user_id": str(row["user_id"]),
+                        "user_name": str(row["user_name"]),
+                        "shares": int(row["shares"]),
+                    }
+                )
+
+            alerts = list(grouped.values())
+            for alert in alerts:
+                connection.execute(
+                    """
+                    INSERT INTO delist_alerts(group_id, stock_id, alerted_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(group_id, stock_id) DO NOTHING
+                    """,
+                    (group_id, alert["stock_id"], alerted_at),
+                )
+        return alerts
+
 
     def source_states(self) -> list[dict[str, Any]]:
         rows = self.connection.execute(

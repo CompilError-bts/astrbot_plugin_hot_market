@@ -154,6 +154,58 @@ class StorageTest(unittest.TestCase):
         self.assertEqual([row["user_id"] for row in analysis], ["trader"])
         self.assertEqual(self.database.group_ids_with_participants(), ["group"])
 
+    def test_delist_alert_groups_holders_and_resets_after_relisting(self) -> None:
+        items = sample_items()
+        self.database.apply_market_snapshot("weibo", items)
+        stock = self.database.market_rows("weibo", 10)[0]
+        initial_price = int(stock["price_cents"])
+        for user_id, user_name in (("u1", "甲"), ("u2", "乙")):
+            self.database.buy(
+                group_id="group",
+                user_id=user_id,
+                user_name=user_name,
+                ticker=stock["ticker"],
+                budget_cents=30_000,
+                starting_cash_cents=100_000,
+                fee_rate=0.005,
+                max_position_ratio=0.35,
+            )
+
+        remaining = items[1:]
+        self.database.apply_market_snapshot(
+            "weibo",
+            remaining,
+            delist_after_misses=3,
+        )
+        faded = self.database.stock(stock["ticker"])
+        self.assertEqual(faded["status"], "fading")
+        self.assertEqual(
+            faded["price_cents"],
+            round(initial_price * 0.97),
+        )
+
+        alerts = self.database.claim_delist_alerts("group")
+        self.assertEqual(len(alerts), 1)
+        self.assertEqual(alerts[0]["ticker"], stock["ticker"])
+        self.assertEqual(
+            [member["user_id"] for member in alerts[0]["members"]],
+            ["u1", "u2"],
+        )
+        self.assertEqual(self.database.claim_delist_alerts("group"), [])
+
+        self.database.apply_market_snapshot("weibo", items)
+        self.database.apply_market_snapshot(
+            "weibo",
+            remaining,
+            delist_after_misses=3,
+        )
+        repeated_alerts = self.database.claim_delist_alerts("group")
+        self.assertEqual(len(repeated_alerts), 1)
+        self.assertEqual(
+            [member["user_id"] for member in repeated_alerts[0]["members"]],
+            ["u1", "u2"],
+        )
+
     def test_position_limit_is_enforced(self) -> None:
         self.database.apply_market_snapshot("weibo", sample_items())
         stock = self.database.market_rows("weibo", 10)[0]
@@ -172,7 +224,15 @@ class StorageTest(unittest.TestCase):
     def test_missing_stock_decays_and_delists(self) -> None:
         self.database.apply_market_snapshot("weibo", sample_items())
         ticker = self.database.market_rows("weibo", 1)[0]["ticker"]
-        for _ in range(3):
+        initial_price = int(self.database.stock(ticker)["price_cents"])
+        self.database.apply_market_snapshot(
+            "weibo",
+            [],
+            delist_after_misses=3,
+        )
+        fading = self.database.stock(ticker)
+        self.assertEqual(fading["price_cents"], round(initial_price * 0.97))
+        for _ in range(2):
             self.database.apply_market_snapshot(
                 "weibo",
                 [],

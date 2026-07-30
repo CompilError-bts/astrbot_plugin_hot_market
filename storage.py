@@ -484,6 +484,24 @@ class MarketDatabase:
         ).fetchall()
         return [dict(row) for row in rows]
 
+    def tradable_market_rows(self, source: str) -> list[dict[str, Any]]:
+        """Return every non-delisted stock, including off-list observations."""
+        rows = self.connection.execute(
+            """
+            SELECT *
+            FROM stocks
+            WHERE source = ? AND status IN ('active', 'fading')
+            ORDER BY
+                CASE status WHEN 'active' THEN 0 ELSE 1 END,
+                CASE WHEN status = 'active' THEN rank END ASC,
+                missing_count ASC,
+                updated_at DESC,
+                ticker ASC
+            """,
+            (source,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
     def stock(self, ticker: str) -> dict[str, Any] | None:
         row = self._stock_by_ticker(self.connection, ticker)
         return dict(row) if row else None

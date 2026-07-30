@@ -65,6 +65,9 @@ class HotMarketPlugin(Star):
             min(1.0, float(config.get("max_position_ratio", 0.35))),
         )
         self.render_market_image = bool(config.get("render_market_image", True))
+        self.send_full_market_text = bool(
+            config.get("send_full_market_text", True)
+        )
         self.delist_alert_enabled = bool(
             config.get("delist_alert_enabled", True)
         )
@@ -337,7 +340,11 @@ class HotMarketPlugin(Star):
     async def _market_view(
         self,
         market_name: str,
-    ) -> tuple[dict[str, list[dict[str, Any]]], datetime | None]:
+    ) -> tuple[
+        dict[str, list[dict[str, Any]]],
+        dict[str, list[dict[str, Any]]],
+        datetime | None,
+    ]:
         await self._ensure_fresh()
         if market_name:
             source = resolve_market(market_name)
@@ -353,15 +360,20 @@ class HotMarketPlugin(Star):
             limit = min(5, self.display_count)
 
         market_rows: dict[str, list[dict[str, Any]]] = {}
+        full_market_rows: dict[str, list[dict[str, Any]]] = {}
         async with self._database_lock:
             for source in sources:
                 market_rows[source] = self.database.market_rows(source, limit)
+                full_market_rows[source] = self.database.tradable_market_rows(
+                    source
+                )
             updated_at = self.database.latest_success_at()
-        return market_rows, updated_at
+        return market_rows, full_market_rows, updated_at
 
     async def _render_market(
         self,
         market_rows: dict[str, list[dict[str, Any]]],
+        full_market_rows: dict[str, list[dict[str, Any]]],
         updated_at: datetime | None,
     ) -> Comp.Image:
         histories: dict[int, list[int]] = {}
@@ -377,6 +389,7 @@ class HotMarketPlugin(Star):
             histories,
             self.refresh_minutes,
             updated_at,
+            summary_rows=full_market_rows,
         )
         try:
             result = await self.html_render(
@@ -460,22 +473,34 @@ class HotMarketPlugin(Star):
         try:
             for chain in await self._delist_warning_chains(event):
                 yield event.chain_result(chain)
-            market_rows, updated_at = await self._market_view(market)
-            if not any(market_rows.values()):
+            (
+                market_rows,
+                full_market_rows,
+                updated_at,
+            ) = await self._market_view(market)
+            if not any(full_market_rows.values()):
                 yield event.plain_result(
                     "暂时没有可用行情，请检查 API 地址或使用 /热市 状态 查看错误。"
                 )
                 return
+            image_sent = False
             if self.render_market_image:
                 try:
-                    image = await self._render_market(market_rows, updated_at)
+                    image = await self._render_market(
+                        market_rows,
+                        full_market_rows,
+                        updated_at,
+                    )
                     yield event.chain_result([image])
-                    return
+                    image_sent = True
                 except Exception as exc:
                     logger.warning(
                         f"热搜交易所图片渲染失败，回退文本：{type(exc).__name__}: {exc}"
                     )
-            yield event.plain_result(format_market_text(market_rows, updated_at))
+            if self.send_full_market_text or not image_sent:
+                yield event.plain_result(
+                    format_market_text(full_market_rows, updated_at)
+                )
         except TradeError as exc:
             yield event.plain_result(f"❌ {exc}")
         except Exception as exc:
@@ -722,6 +747,11 @@ class HotMarketPlugin(Star):
                 if self.delist_alert_enabled
                 else "持仓退榜预警：未启用"
             ),
+            (
+                "全量行情明细：已启用"
+                if self.send_full_market_text
+                else "全量行情明细：未启用"
+            ),
         ]
         for source in self.enabled_markets:
             state = states.get(source)
@@ -761,6 +791,8 @@ class HotMarketPlugin(Star):
             "/热市 排行\n"
             "/热市 状态\n"
             "/热市 刷新\n\n"
+            "行情图展示精选股票，并可继续发送完整非退市行情；"
+            "QQ 长文本由 AstrBot 自动折叠。\n"
             "各平台独立定价。热点排名越高，股价越高；"
             "连续离榜后价格会衰减，最终退市至 1 热币。"
         )

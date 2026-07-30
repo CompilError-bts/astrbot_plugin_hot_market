@@ -183,6 +183,10 @@ class StorageTest(unittest.TestCase):
             faded["price_cents"],
             round(initial_price * 0.97),
         )
+        tradable = self.database.tradable_market_rows("weibo")
+        self.assertEqual(len(tradable), len(items))
+        self.assertEqual(tradable[-1]["ticker"], stock["ticker"])
+        self.assertEqual(tradable[-1]["status"], "fading")
 
         alerts = self.database.claim_delist_alerts("group")
         self.assertEqual(len(alerts), 1)
@@ -241,6 +245,7 @@ class StorageTest(unittest.TestCase):
         stock = self.database.stock(ticker)
         self.assertEqual(stock["status"], "delisted")
         self.assertEqual(stock["price_cents"], 100)
+        self.assertEqual(self.database.tradable_market_rows("weibo"), [])
 
 
 if __name__ == "__main__":

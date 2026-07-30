@@ -65,6 +65,12 @@
     "hint": "开启后用户查询行情时调用 AstrBot 当前配置的 t2i 服务；失败会自动回退为文本。",
     "default": true
   },
+  "send_full_market_text": {
+    "description": "查询行情时发送全量明细",
+    "type": "bool",
+    "hint": "开启后，行情图片后继续发送全部 active 与 fading 股票；QQ 长文本可由 AstrBot 的 forward_threshold 自动折叠为转发消息。",
+    "default": true
+  },
   "daily_analysis_enabled": {
     "description": "启用每日大模型收盘复盘",
     "type": "bool",

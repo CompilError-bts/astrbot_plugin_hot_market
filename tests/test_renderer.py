@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from astrbot_plugin_hot_market.renderer import (
     change_percent,
     compact_money,
+    format_market_text,
     money,
     prepare_dashboard,
     prepare_stock_detail,
@@ -40,16 +41,66 @@ class RendererTest(unittest.TestCase):
                 }
             ]
         }
+        summary_rows = {
+            "weibo": [
+                rows["weibo"][0],
+                {
+                    "id": 2,
+                    "rank": None,
+                    "status": "fading",
+                    "title": "昨日热点",
+                    "ticker": "WB-昨日热点",
+                    "price_cents": 970,
+                    "previous_price_cents": 1_000,
+                },
+            ]
+        }
         dashboard = prepare_dashboard(
             rows,
             {1: [1_000, 1_200]},
             10,
             datetime(2026, 7, 30, tzinfo=UTC),
+            summary_rows=summary_rows,
         )
         self.assertEqual(dashboard["stats"]["hot_ticker"], "WB-小米汽车")
         self.assertEqual(dashboard["stats"]["up"], 1)
+        self.assertEqual(dashboard["stats"]["down"], 1)
+        self.assertEqual(dashboard["stats"]["total"], 2)
+        self.assertEqual(dashboard["stats"]["active"], 1)
+        self.assertEqual(dashboard["stats"]["fading"], 1)
         self.assertTrue(dashboard["slogan"])
         self.assertEqual(dashboard["markets"][0]["rows"][0]["rank_badge"], "🥇")
+
+    def test_full_market_text_marks_fading_stocks(self) -> None:
+        text = format_market_text(
+            {
+                "weibo": [
+                    {
+                        "rank": 1,
+                        "status": "active",
+                        "missing_count": 0,
+                        "title": "今日热点",
+                        "ticker": "WB-今日热点",
+                        "price_cents": 1_200,
+                        "previous_price_cents": 1_000,
+                    },
+                    {
+                        "rank": None,
+                        "status": "fading",
+                        "missing_count": 1,
+                        "title": "昨日热点",
+                        "ticker": "WB-昨日热点",
+                        "price_cents": 970,
+                        "previous_price_cents": 1_000,
+                    },
+                ]
+            },
+            None,
+        )
+        self.assertIn("共 2 只｜在榜 1｜离榜观察 1", text)
+        self.assertIn("#01 WB-今日热点", text)
+        self.assertIn("离榜1轮 WB-昨日热点", text)
+        self.assertIn("仅可卖出", text)
 
     def test_sparkline_handles_flat_and_rising_data(self) -> None:
         flat = sparkline_points([100, 100, 100])

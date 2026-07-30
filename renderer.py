@@ -160,7 +160,7 @@ body {
     <div class="stat-card">
       <div class="stat-label">📡 在市热点</div>
       <div class="stat-value">{{ stats.total }}</div>
-      <div class="stat-sub">只 · 独立交易</div>
+      <div class="stat-sub">在榜 {{ stats.active }} · 观察 {{ stats.fading }}</div>
     </div>
   </section>
 
@@ -443,9 +443,11 @@ def prepare_dashboard(
     histories: dict[int, list[int]],
     refresh_minutes: int,
     updated_at: datetime | None,
+    summary_rows: dict[str, list[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     markets: list[dict[str, Any]] = []
-    all_rows: list[dict[str, Any]] = []
+    if summary_rows is None:
+        summary_rows = market_rows
     medal = {1: "🥇", 2: "🥈", 3: "🥉"}
     for source, rows in market_rows.items():
         definition = MARKETS[source]
@@ -478,10 +480,16 @@ def prepare_dashboard(
                 ),
             }
             prepared_rows.append(prepared)
-            all_rows.append(prepared)
 
-        up_count = sum(row["change_class"] == "up" for row in prepared_rows)
-        down_count = sum(row["change_class"] == "down" for row in prepared_rows)
+        market_percentages = [
+            change_percent(
+                int(row["price_cents"]),
+                int(row["previous_price_cents"]),
+            )
+            for row in summary_rows.get(source, rows)
+        ]
+        up_count = sum(value > 0.005 for value in market_percentages)
+        down_count = sum(value < -0.005 for value in market_percentages)
         if up_count > down_count:
             market_mood, mood_class = "多头升温", "up"
         elif down_count > up_count:
@@ -499,8 +507,26 @@ def prepare_dashboard(
             }
         )
 
-    up_count = sum(row["change_class"] == "up" for row in all_rows)
-    down_count = sum(row["change_class"] == "down" for row in all_rows)
+    all_summary_rows = [row for rows in summary_rows.values() for row in rows]
+    summary_data: list[dict[str, Any]] = []
+    for row in all_summary_rows:
+        percentage = change_percent(
+            int(row["price_cents"]),
+            int(row["previous_price_cents"]),
+        )
+        summary_data.append(
+            {
+                "ticker": str(row["ticker"]),
+                "rank": row.get("rank"),
+                "status": str(row.get("status", "active")),
+                "percentage": percentage,
+                "change": _signed_percent(percentage),
+                "change_class": _movement_class(percentage),
+            }
+        )
+
+    up_count = sum(row["change_class"] == "up" for row in summary_data)
+    down_count = sum(row["change_class"] == "down" for row in summary_data)
     if up_count > down_count:
         mood = "热钱进场，红榜正在扩散"
     elif down_count > up_count:
@@ -508,9 +534,13 @@ def prepare_dashboard(
     else:
         mood = "多空打平，下一条热搜决定方向"
 
-    hot_row = min(all_rows, key=lambda row: row["rank"], default=None)
+    hot_row = min(
+        (row for row in summary_data if row["rank"] is not None),
+        key=lambda row: int(row["rank"]),
+        default=None,
+    )
     mover_row = max(
-        all_rows,
+        summary_data,
         key=lambda row: abs(float(row["percentage"])),
         default=None,
     )
@@ -536,7 +566,9 @@ def prepare_dashboard(
         "slogan": slogans[slogan_index],
         "mood": mood,
         "stats": {
-            "total": len(all_rows),
+            "total": len(summary_data),
+            "active": sum(row["status"] == "active" for row in summary_data),
+            "fading": sum(row["status"] == "fading" for row in summary_data),
             "up": up_count,
             "down": down_count,
             "hot_ticker": hot_row["ticker"] if hot_row else "--",
@@ -550,11 +582,30 @@ def format_market_text(
     market_rows: dict[str, list[dict[str, Any]]],
     updated_at: datetime | None,
 ) -> str:
-    lines = ["📈 热搜交易所"]
+    all_rows = [row for rows in market_rows.values() for row in rows]
+    active_total = sum(
+        row.get("status", "active") == "active" for row in all_rows
+    )
+    fading_total = sum(
+        row.get("status", "active") == "fading" for row in all_rows
+    )
+    lines = ["📊 热搜交易所 · 全量行情"]
     if updated_at:
         lines.append(f"行情时间：{updated_at.astimezone().strftime('%m-%d %H:%M')}")
+    lines.append(
+        f"共 {len(all_rows)} 只｜在榜 {active_total}｜离榜观察 {fading_total}"
+    )
     for source, rows in market_rows.items():
-        lines.append(f"\n【{MARKETS[source].name}股市】")
+        active_count = sum(
+            row.get("status", "active") == "active" for row in rows
+        )
+        fading_count = sum(
+            row.get("status", "active") == "fading" for row in rows
+        )
+        lines.append(
+            f"\n【{MARKETS[source].name}股市｜"
+            f"在榜 {active_count} · 观察 {fading_count}】"
+        )
         if not rows:
             lines.append("暂无行情")
             continue
@@ -567,9 +618,16 @@ def format_market_text(
             title = str(row["title"])
             if len(title) > 24:
                 title = f"{title[:23]}…"
+            if row.get("status") == "fading":
+                position = f"离榜{int(row.get('missing_count', 1))}轮"
+                trade_hint = " · 仅可卖出"
+            else:
+                rank = int(row["rank"])
+                position = f"#{rank:02d}"
+                trade_hint = ""
             lines.append(
-                f"{row['rank']:>2}. {row['ticker']} "
+                f"{position} {row['ticker']} "
                 f"{money(int(row['price_cents']))} "
-                f"{sign}{percentage:.1f}%\n    {title}"
+                f"{sign}{percentage:.1f}%{trade_hint}\n    {title}"
             )
     return "\n".join(lines)

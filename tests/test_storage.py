@@ -1,0 +1,117 @@
+from __future__ import annotations
+
+import tempfile
+import unittest
+from pathlib import Path
+
+from astrbot_plugin_hot_market.market import parse_market_payload
+from astrbot_plugin_hot_market.storage import MarketDatabase, TradeError
+
+
+def sample_items():
+    return parse_market_payload(
+        "weibo",
+        {
+            "code": 200,
+            "data": [
+                {"title": f"测试热点{i}", "hot_value": 10_000 - i} for i in range(1, 11)
+            ],
+        },
+        30,
+    )
+
+
+class StorageTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.database = MarketDatabase(Path(self.temp_dir.name) / "market.db")
+
+    def tearDown(self) -> None:
+        self.database.close()
+        self.temp_dir.cleanup()
+
+    def test_snapshot_buy_sell_and_group_isolation(self) -> None:
+        stats = self.database.apply_market_snapshot("weibo", sample_items())
+        self.assertEqual(stats["listed"], 10)
+        stock = self.database.market_rows("weibo", 10)[5]
+
+        bought = self.database.buy(
+            group_id="group-a",
+            user_id="user-1",
+            user_name="Alice",
+            ticker=stock["ticker"],
+            budget_cents=30_000,
+            starting_cash_cents=100_000,
+            fee_rate=0.005,
+            max_position_ratio=0.35,
+        )
+        self.assertGreater(bought["shares"], 0)
+
+        portfolio = self.database.portfolio(
+            "group-a",
+            "user-1",
+            "Alice",
+            100_000,
+        )
+        self.assertEqual(len(portfolio["positions"]), 1)
+
+        isolated = self.database.portfolio(
+            "group-b",
+            "user-1",
+            "Alice",
+            100_000,
+        )
+        self.assertEqual(isolated["net_asset_cents"], 100_000)
+        self.assertEqual(isolated["positions"], [])
+
+        sold = self.database.sell(
+            group_id="group-a",
+            user_id="user-1",
+            user_name="Alice",
+            ticker=stock["ticker"],
+            shares_to_sell=None,
+            starting_cash_cents=100_000,
+            fee_rate=0.005,
+        )
+        self.assertEqual(sold["shares"], bought["shares"])
+        self.assertEqual(
+            self.database.portfolio(
+                "group-a",
+                "user-1",
+                "Alice",
+                100_000,
+            )["positions"],
+            [],
+        )
+
+    def test_position_limit_is_enforced(self) -> None:
+        self.database.apply_market_snapshot("weibo", sample_items())
+        stock = self.database.market_rows("weibo", 10)[0]
+        with self.assertRaises(TradeError):
+            self.database.buy(
+                group_id="group",
+                user_id="user",
+                user_name="Bob",
+                ticker=stock["ticker"],
+                budget_cents=90_000,
+                starting_cash_cents=100_000,
+                fee_rate=0.005,
+                max_position_ratio=0.35,
+            )
+
+    def test_missing_stock_decays_and_delists(self) -> None:
+        self.database.apply_market_snapshot("weibo", sample_items())
+        ticker = self.database.market_rows("weibo", 1)[0]["ticker"]
+        for _ in range(3):
+            self.database.apply_market_snapshot(
+                "weibo",
+                [],
+                delist_after_misses=3,
+            )
+        stock = self.database.stock(ticker)
+        self.assertEqual(stock["status"], "delisted")
+        self.assertEqual(stock["price_cents"], 100)
+
+
+if __name__ == "__main__":
+    unittest.main()

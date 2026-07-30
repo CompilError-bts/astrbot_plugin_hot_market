@@ -1,0 +1,74 @@
+{
+  "api_base_url": {
+    "description": "60s API 根地址",
+    "type": "string",
+    "hint": "填写根地址，不要包含具体接口路径。例如 https://60s.example.com；也兼容以 /v2 结尾的地址。",
+    "obvious_hint": true,
+    "default": "https://60s.viki.moe"
+  },
+  "allowed_group_umos": {
+    "description": "允许使用插件的群聊 UMO",
+    "type": "list",
+    "hint": "精确填写完整 UMO；群内发送 /sid 可获取。留空将拒绝所有会话，填写 * 表示允许全部群聊；私聊始终禁止。",
+    "default": []
+  },
+  "enabled_markets": {
+    "description": "启用的独立市场",
+    "type": "list",
+    "hint": "支持 weibo、baidu、bili、douyin、zhihu、toutiao、rednote。",
+    "default": [
+      "weibo",
+      "baidu",
+      "bili",
+      "douyin"
+    ]
+  },
+  "refresh_interval_minutes": {
+    "description": "行情采集周期（分钟）",
+    "type": "int",
+    "hint": "后台定时获取每个启用平台的榜单。推荐 5～10 分钟。",
+    "default": 10
+  },
+  "market_size": {
+    "description": "每个市场采集数量",
+    "type": "int",
+    "hint": "每次最多保留的榜单条数，范围 5～50。",
+    "default": 30
+  },
+  "display_count": {
+    "description": "单市场展示数量",
+    "type": "int",
+    "hint": "查询指定市场时显示多少只股票，范围 3～20。",
+    "default": 10
+  },
+  "starting_cash": {
+    "description": "初始热币",
+    "type": "float",
+    "hint": "每个用户在每个群/会话中的初始虚拟资金。",
+    "default": 1000.0
+  },
+  "fee_rate": {
+    "description": "交易手续费率",
+    "type": "float",
+    "hint": "0.005 表示每次买入或卖出收取 0.5%。",
+    "default": 0.005
+  },
+  "max_position_ratio": {
+    "description": "单股持仓上限",
+    "type": "float",
+    "hint": "0.35 表示单只股票市值不能超过总资产的 35%。",
+    "default": 0.35
+  },
+  "render_market_image": {
+    "description": "使用 t2i 绘制行情图",
+    "type": "bool",
+    "hint": "开启后用户查询行情时调用 AstrBot 当前配置的 t2i 服务；失败会自动回退为文本。",
+    "default": true
+  },
+  "delist_after_misses": {
+    "description": "连续离榜几次后退市",
+    "type": "int",
+    "hint": "退市前每次离榜股价衰减 25%，退市价格为 1 热币。",
+    "default": 3
+  }
+}

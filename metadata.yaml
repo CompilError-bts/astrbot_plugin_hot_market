@@ -1,7 +1,7 @@
 name: astrbot_plugin_hot_market
 display_name: 热搜交易所
-desc: 将多个平台热搜分别变成可买卖的虚拟股市，支持行情图、全量行情、个股走势、持仓、群排行和离榜预警。
-version: 0.5.0
+desc: 将多个平台热搜分别变成可买卖的虚拟股市，支持行情图、热搜资讯、主动离榜预警、持仓和群排行。
+version: 0.6.0
 author: BaiTS & Codex
 repo: "https://github.com/CompilError-bts/astrbot_plugin_hot_market"
 astrbot_version: ">=4.5.7,<5"

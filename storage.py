@@ -49,6 +49,8 @@ class MarketDatabase:
                 title TEXT NOT NULL,
                 normalized_title TEXT NOT NULL,
                 link TEXT NOT NULL DEFAULT '',
+                summary TEXT NOT NULL DEFAULT '',
+                image_url TEXT NOT NULL DEFAULT '',
                 raw_score TEXT NOT NULL DEFAULT '',
                 rank INTEGER,
                 list_size INTEGER NOT NULL,
@@ -136,6 +138,18 @@ class MarketDatabase:
             );
             """
         )
+        stock_columns = {
+            str(row["name"])
+            for row in self.connection.execute("PRAGMA table_info(stocks)")
+        }
+        if "summary" not in stock_columns:
+            self.connection.execute(
+                "ALTER TABLE stocks ADD COLUMN summary TEXT NOT NULL DEFAULT ''"
+            )
+        if "image_url" not in stock_columns:
+            self.connection.execute(
+                "ALTER TABLE stocks ADD COLUMN image_url TEXT NOT NULL DEFAULT ''"
+            )
         self.connection.commit()
 
     @contextmanager
@@ -325,11 +339,12 @@ class MarketDatabase:
                     cursor = connection.execute(
                         """
                         INSERT INTO stocks(
-                            ticker, source, title, normalized_title, link, raw_score,
+                            ticker, source, title, normalized_title, link,
+                            summary, image_url, raw_score,
                             rank, list_size, price_cents, previous_price_cents,
                             status, missing_count, first_seen_at, last_seen_at, updated_at
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, ?, ?, ?)
                         """,
                         (
                             ticker,
@@ -337,6 +352,8 @@ class MarketDatabase:
                             item.title,
                             item.normalized_title,
                             item.link,
+                            item.summary,
+                            item.image_url,
                             item.raw_score,
                             item.rank,
                             item.list_size,
@@ -374,7 +391,8 @@ class MarketDatabase:
                     connection.execute(
                         """
                         UPDATE stocks
-                        SET ticker = ?, title = ?, link = ?, raw_score = ?, rank = ?,
+                        SET ticker = ?, title = ?, link = ?, summary = ?,
+                            image_url = ?, raw_score = ?, rank = ?,
                             list_size = ?, price_cents = ?,
                             previous_price_cents = ?, status = 'active',
                             missing_count = 0, last_seen_at = ?, updated_at = ?
@@ -384,6 +402,8 @@ class MarketDatabase:
                             ticker,
                             item.title,
                             item.link,
+                            item.summary,
+                            item.image_url,
                             item.raw_score,
                             item.rank,
                             item.list_size,
@@ -582,6 +602,14 @@ class MarketDatabase:
                     (group_id, alert["stock_id"], alerted_at),
                 )
         return alerts
+
+    def release_delist_alert(self, group_id: str, stock_id: int) -> None:
+        """Release a failed proactive claim so a later cycle can retry it."""
+        self.connection.execute(
+            "DELETE FROM delist_alerts WHERE group_id = ? AND stock_id = ?",
+            (group_id, stock_id),
+        )
+        self.connection.commit()
 
 
     def source_states(self) -> list[dict[str, Any]]:

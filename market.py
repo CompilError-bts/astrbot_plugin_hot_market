@@ -28,6 +28,8 @@ class HotItem:
     rank: int
     list_size: int
     link: str
+    summary: str
+    image_url: str
     raw_score: str
     target_price_cents: int
 
@@ -256,6 +258,30 @@ def parse_market_payload(
             "hot_value",
             raw_item.get("score", raw_item.get("hot", "")),
         )
+        summary = next(
+            (
+                value.strip()
+                for key in ("desc", "description", "summary")
+                if isinstance((value := raw_item.get(key)), str)
+                and value.strip()
+            ),
+            "",
+        )
+        image_url = next(
+            (
+                value.strip()
+                for key in (
+                    "cover",
+                    "image",
+                    "image_url",
+                    "pic",
+                    "thumbnail",
+                )
+                if isinstance((value := raw_item.get(key)), str)
+                and value.strip()
+            ),
+            "",
+        )
         result.append(
             HotItem(
                 source=source,
@@ -265,6 +291,8 @@ def parse_market_payload(
                 rank=rank,
                 list_size=list_size,
                 link=str(raw_item.get("link") or raw_item.get("url") or ""),
+                summary=summary,
+                image_url=image_url,
                 raw_score=str(raw_score) if raw_score is not None else "",
                 target_price_cents=target_price_cents(rank, list_size),
             )

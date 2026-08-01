@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 import tempfile
 from dataclasses import replace
 import unittest
@@ -195,6 +196,9 @@ class StorageTest(unittest.TestCase):
             [member["user_id"] for member in alerts[0]["members"]],
             ["u1", "u2"],
         )
+        self.database.release_delist_alert("group", int(alerts[0]["stock_id"]))
+        retried_alerts = self.database.claim_delist_alerts("group")
+        self.assertEqual(len(retried_alerts), 1)
         self.assertEqual(self.database.claim_delist_alerts("group"), [])
 
         self.database.apply_market_snapshot("weibo", items)
@@ -209,6 +213,53 @@ class StorageTest(unittest.TestCase):
             [member["user_id"] for member in repeated_alerts[0]["members"]],
             ["u1", "u2"],
         )
+
+    def test_stock_info_columns_are_migrated_and_persisted(self) -> None:
+        database_path = Path(self.temp_dir.name) / "legacy.db"
+        connection = sqlite3.connect(database_path)
+        connection.execute(
+            """
+            CREATE TABLE stocks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticker TEXT NOT NULL UNIQUE,
+                source TEXT NOT NULL,
+                title TEXT NOT NULL,
+                normalized_title TEXT NOT NULL,
+                link TEXT NOT NULL DEFAULT '',
+                raw_score TEXT NOT NULL DEFAULT '',
+                rank INTEGER,
+                list_size INTEGER NOT NULL,
+                price_cents INTEGER NOT NULL,
+                previous_price_cents INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                missing_count INTEGER NOT NULL DEFAULT 0,
+                first_seen_at TEXT NOT NULL,
+                last_seen_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(source, normalized_title)
+            )
+            """
+        )
+        connection.commit()
+        connection.close()
+
+        migrated = MarketDatabase(database_path)
+        columns = {
+            row["name"]
+            for row in migrated.connection.execute("PRAGMA table_info(stocks)")
+        }
+        self.assertIn("summary", columns)
+        self.assertIn("image_url", columns)
+        item = replace(
+            sample_items()[0],
+            summary="测试摘要",
+            image_url="https://a.test/cover.jpg",
+        )
+        migrated.apply_market_snapshot("weibo", [item])
+        stock = migrated.stock(item.ticker)
+        self.assertEqual(stock["summary"], "测试摘要")
+        self.assertEqual(stock["image_url"], "https://a.test/cover.jpg")
+        migrated.close()
 
     def test_position_limit_is_enforced(self) -> None:
         self.database.apply_market_snapshot("weibo", sample_items())

@@ -58,7 +58,13 @@ class MarketRulesTest(unittest.TestCase):
         payload = {
             "code": 200,
             "data": [
-                {"title": "热点一", "hot_value": 123, "link": "https://a.test"},
+                {
+                    "title": "热点一",
+                    "hot_value": 123,
+                    "link": "https://a.test",
+                    "desc": "热点一的摘要",
+                    "cover": "https://a.test/cover.jpg",
+                },
                 {"rank": 2, "title": "热点二", "score": "99w"},
             ],
         }
@@ -68,6 +74,10 @@ class MarketRulesTest(unittest.TestCase):
         self.assertEqual(items[1].raw_score, "99w")
         self.assertGreater(items[0].target_price_cents, items[1].target_price_cents)
 
+        self.assertEqual(items[0].summary, "热点一的摘要")
+        self.assertEqual(items[0].image_url, "https://a.test/cover.jpg")
+        self.assertEqual(items[1].summary, "")
+        self.assertEqual(items[1].image_url, "")
 
 if __name__ == "__main__":
     unittest.main()

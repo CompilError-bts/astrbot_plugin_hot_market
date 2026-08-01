@@ -438,6 +438,42 @@ def prepare_stock_detail(
     }
 
 
+def format_stock_detail_text(
+    stock: dict[str, Any],
+    history: list[int],
+    summary_max_length: int = 360,
+) -> str:
+    current = int(stock["price_cents"])
+    previous = int(stock["previous_price_cents"])
+    percentage = change_percent(current, previous)
+    rank_text = f"#{stock['rank']}" if stock.get("rank") is not None else "已离榜"
+    status_text = {
+        "active": "正常交易",
+        "fading": "离榜观察",
+        "delisted": "已退市",
+    }.get(str(stock.get("status", "")), str(stock.get("status", "未知")))
+    history_text = " → ".join(money(int(value)) for value in history[-8:])
+    summary = str(stock.get("summary") or "").strip()
+    if summary:
+        limit = max(80, summary_max_length)
+        if len(summary) > limit:
+            summary = f"{summary[:limit - 1]}…"
+    else:
+        summary = "该平台榜单暂未提供摘要，请打开原文查看详情。"
+    link = str(stock.get("link") or "").strip()
+    link_text = link or "该平台榜单暂未提供原文链接。"
+    return (
+        f"📰 {stock['ticker']} · 热搜资讯\n"
+        f"标题：{stock['title']}\n"
+        f"市场：{MARKETS[str(stock['source'])].name}股市\n"
+        f"现价：{money(current)}（{percentage:+.1f}%）\n"
+        f"排名：{rank_text}｜状态：{status_text}\n"
+        f"近期价格：{history_text or '暂无'}\n\n"
+        f"摘要：{summary}\n"
+        f"原文：{link_text}"
+    )
+
+
 def prepare_dashboard(
     market_rows: dict[str, list[dict[str, Any]]],
     histories: dict[int, list[int]],

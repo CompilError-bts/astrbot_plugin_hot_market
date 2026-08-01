@@ -25,6 +25,7 @@ from .renderer import (
     STOCK_DETAIL_TEMPLATE,
     compact_money,
     format_market_text,
+    format_stock_detail_text,
     money,
     prepare_dashboard,
     prepare_stock_detail,
@@ -70,6 +71,9 @@ class HotMarketPlugin(Star):
         )
         self.delist_alert_enabled = bool(
             config.get("delist_alert_enabled", True)
+        )
+        self.detail_cover_enabled = bool(
+            config.get("detail_cover_enabled", True)
         )
         self.delist_after_misses = max(
             1,
@@ -173,6 +177,7 @@ class HotMarketPlugin(Star):
         while True:
             try:
                 await self._collect_all()
+                await self._send_pending_delist_alerts()
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -300,34 +305,80 @@ class HotMarketPlugin(Star):
             )
             return []
 
-        chains: list[list[Any]] = []
-        for alert in alerts:
-            market_name = MARKETS[str(alert["source"])].name
-            chain: list[Any] = [
-                Comp.Plain(
-                    "⚠️ 持仓股退榜预警\n"
-                    f"{alert['ticker']} {alert['title']} "
-                    f"已退出{market_name}热搜榜。\n"
-                    "持仓成员：\u200b"
-                )
-            ]
-            for index, member in enumerate(alert["members"]):
-                if index:
-                    chain.append(Comp.Plain("\u200b、\u200b"))
-                chain.append(Comp.At(qq=str(member["user_id"])))
-            if alert["status"] == "delisted":
-                alert_tail = (
-                    "\u200b\n该股已完成退市，价格归为 1 热币。"
-                    "同一次离榜只提醒一次，请留意持仓。"
-                )
-            else:
-                alert_tail = (
-                    "\u200b\n该股已进入离榜观察，期间每轮价格下调 3%。"
-                    "同一次离榜只提醒一次，请留意持仓。"
-                )
-            chain.append(Comp.Plain(alert_tail))
-            chains.append(chain)
-        return chains
+        return [
+            self._build_delist_warning_chain(alert) for alert in alerts
+        ]
+
+    async def _send_pending_delist_alerts(self) -> None:
+        """Actively deliver newly claimed off-list warnings after a refresh."""
+        if not self.delist_alert_enabled:
+            return
+        async with self._database_lock:
+            account_groups = set(self.database.group_ids_with_participants())
+        if "*" in self.allowed_group_umos:
+            target_umos = account_groups
+        else:
+            target_umos = account_groups.intersection(self.allowed_group_umos)
+
+        for umo in sorted(target_umos):
+            async with self._database_lock:
+                alerts = self.database.claim_delist_alerts(umo)
+            for alert in alerts:
+                try:
+                    sent = await self.context.send_message(
+                        umo,
+                        MessageChain(
+                            chain=self._build_delist_warning_chain(alert)
+                        ),
+                    )
+                    if not sent:
+                        raise RuntimeError("没有找到可主动发送消息的平台")
+                except asyncio.CancelledError:
+                    async with self._database_lock:
+                        self.database.release_delist_alert(
+                            umo,
+                            int(alert["stock_id"]),
+                        )
+                    raise
+                except Exception as exc:
+                    async with self._database_lock:
+                        self.database.release_delist_alert(
+                            umo,
+                            int(alert["stock_id"]),
+                        )
+                    logger.error(
+                        "热搜交易所主动退榜预警发送失败："
+                        f"{umo} · {alert['ticker']} · "
+                        f"{type(exc).__name__}: {exc}"
+                    )
+
+    @staticmethod
+    def _build_delist_warning_chain(alert: dict[str, Any]) -> list[Any]:
+        market_name = MARKETS[str(alert["source"])].name
+        chain: list[Any] = [
+            Comp.Plain(
+                "⚠️ 持仓股退榜预警\n"
+                f"{alert['ticker']} {alert['title']} "
+                f"已退出{market_name}热搜榜。\n"
+                "持仓成员：\u200b"
+            )
+        ]
+        for index, member in enumerate(alert["members"]):
+            if index:
+                chain.append(Comp.Plain("\u200b、\u200b"))
+            chain.append(Comp.At(qq=str(member["user_id"])))
+        if alert["status"] == "delisted":
+            tail = (
+                "\u200b\n该股已完成退市，价格归为 1 热币。"
+                "同一次离榜只提醒一次，请留意持仓。"
+            )
+        else:
+            tail = (
+                "\u200b\n该股已进入离榜观察，期间每轮价格下调 3%。"
+                "同一次离榜只提醒一次，请留意持仓。"
+            )
+        chain.append(Comp.Plain(tail))
+        return chain
 
     def _identity(self, event: AstrMessageEvent) -> tuple[str, str, str]:
         group_id = event.unified_msg_origin
@@ -529,26 +580,20 @@ class HotMarketPlugin(Star):
                 try:
                     image = await self._render_stock_detail(stock, history)
                     yield event.chain_result([image])
-                    return
                 except Exception as exc:
                     logger.warning(
                         "热市股票详情图片渲染失败，回退文本："
                         f"{type(exc).__name__}: {exc}"
                     )
-            previous = int(stock["previous_price_cents"])
-            current = int(stock["price_cents"])
-            percentage = (current - previous) / previous * 100 if previous else 0
-            history_text = " → ".join(money(value) for value in history[-8:])
-            rank_text = f"#{stock['rank']}" if stock["rank"] is not None else "已离榜"
             yield event.plain_result(
-                f"📊 {stock['ticker']} {stock['title']}\n"
-                f"市场：{MARKETS[stock['source']].name}股市\n"
-                f"现价：{money(current)}（{percentage:+.1f}%）\n"
-                f"排名：{rank_text}\n"
-                f"状态：{stock['status']}\n"
-                f"近期价格：{history_text or '暂无'}\n"
-                f"链接：{stock['link'] or '无'}"
+                format_stock_detail_text(stock, history)
             )
+            image_url = str(stock.get("image_url") or "").strip()
+            if (
+                self.detail_cover_enabled
+                and image_url.startswith(("http://", "https://"))
+            ):
+                yield event.chain_result([Comp.Image.fromURL(image_url)])
         except TradeError as exc:
             yield event.plain_result(f"❌ {exc}")
 
@@ -743,7 +788,7 @@ class HotMarketPlugin(Star):
                 else "每日复盘：未启用"
             ),
             (
-                "持仓退榜预警：已启用"
+                "持仓退榜预警：已启用（定时主动）"
                 if self.delist_alert_enabled
                 else "持仓退榜预警：未启用"
             ),
@@ -793,6 +838,8 @@ class HotMarketPlugin(Star):
             "/热市 刷新\n\n"
             "行情图展示精选股票，并可继续发送完整非退市行情；"
             "QQ 长文本由 AstrBot 自动折叠。\n"
+            "股票详情同时提供走势图、榜单摘要、原文链接，"
+            "有封面时可追加发送封面图。\n"
             "各平台独立定价。热点排名越高，股价越高；"
             "连续离榜后价格会衰减，最终退市至 1 热币。"
         )

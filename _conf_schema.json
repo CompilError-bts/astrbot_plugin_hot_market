@@ -71,6 +71,12 @@
     "hint": "开启后，行情图片后继续发送全部 active 与 fading 股票；QQ 长文本可由 AstrBot 的 forward_threshold 自动折叠为转发消息。",
     "default": true
   },
+  "detail_cover_enabled": {
+    "description": "股票详情发送热搜封面图",
+    "type": "bool",
+    "hint": "开启后，若 60s API 的该平台榜单提供 cover/image 字段，会在走势图和资讯文本后追加发送封面图。",
+    "default": true
+  },
   "daily_analysis_enabled": {
     "description": "启用每日大模型收盘复盘",
     "type": "bool",
@@ -92,7 +98,7 @@
   "delist_alert_enabled": {
     "description": "启用持仓股离榜 @ 预警",
     "type": "bool",
-    "hint": "开启后，每次查询都会检查持仓股；同一股票本次离榜只发送一条消息，并同时 @ 全部持仓成员。重新上榜后会重置提醒。",
+    "hint": "开启后，每轮后台行情采集完成会主动检查并通知；查询时也会补查。同一股票本次离榜只发送一条消息，并同时 @ 全部持仓成员。重新上榜后会重置提醒。",
     "default": true
   },
   "delist_after_misses": {

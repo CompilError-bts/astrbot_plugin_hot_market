@@ -7,6 +7,7 @@ from astrbot_plugin_hot_market.renderer import (
     change_percent,
     compact_money,
     format_market_text,
+    format_stock_detail_text,
     money,
     prepare_dashboard,
     prepare_stock_detail,
@@ -130,6 +131,40 @@ class RendererTest(unittest.TestCase):
         self.assertEqual(len(detail["sparkline"].split()), 3)
         self.assertTrue(detail["area"].startswith("18,202 "))
         self.assertEqual(detail["point_count"], 3)
+
+    def test_stock_detail_text_contains_summary_and_original_link(self) -> None:
+        stock = {
+            "source": "baidu",
+            "rank": 2,
+            "status": "active",
+            "title": "测试热点",
+            "ticker": "BD-测试热点",
+            "price_cents": 1_200,
+            "previous_price_cents": 1_100,
+            "summary": "这是榜单提供的摘要。",
+            "link": "https://example.test/topic",
+        }
+        text = format_stock_detail_text(stock, [1_000, 1_100, 1_200])
+        self.assertIn("📰 BD-测试热点 · 热搜资讯", text)
+        self.assertIn("摘要：这是榜单提供的摘要。", text)
+        self.assertIn("原文：https://example.test/topic", text)
+
+    def test_stock_detail_text_gracefully_handles_missing_info(self) -> None:
+        stock = {
+            "source": "weibo",
+            "rank": None,
+            "status": "fading",
+            "title": "旧热点",
+            "ticker": "WB-旧热点",
+            "price_cents": 970,
+            "previous_price_cents": 1_000,
+            "summary": "",
+            "link": "",
+        }
+        text = format_stock_detail_text(stock, [1_000, 970])
+        self.assertIn("该平台榜单暂未提供摘要", text)
+        self.assertIn("该平台榜单暂未提供原文链接", text)
+        self.assertIn("排名：已离榜｜状态：离榜观察", text)
 
 
 if __name__ == "__main__":

@@ -667,3 +667,44 @@ def format_market_text(
                 f"{sign}{percentage:.1f}%{trade_hint}\n    {title}"
             )
     return "\n".join(lines)
+
+
+def paginate_text(text: str, max_chars: int = 1200) -> list[str]:
+    """Split long text on line boundaries and label each resulting page."""
+    max_chars = max(200, int(max_chars))
+    header_reserve = 32
+    content_limit = max_chars - header_reserve
+    pages: list[str] = []
+    current_lines: list[str] = []
+    current_length = 0
+
+    def flush() -> None:
+        nonlocal current_lines, current_length
+        if current_lines:
+            pages.append("\n".join(current_lines))
+            current_lines = []
+            current_length = 0
+
+    for source_line in text.splitlines():
+        remaining = source_line
+        segments: list[str] = []
+        if not remaining:
+            segments.append("")
+        while remaining:
+            segments.append(remaining[:content_limit])
+            remaining = remaining[content_limit:]
+
+        for segment in segments:
+            extra_length = len(segment) + (1 if current_lines else 0)
+            if current_lines and current_length + extra_length > content_limit:
+                flush()
+                extra_length = len(segment)
+            current_lines.append(segment)
+            current_length += extra_length
+    flush()
+
+    total = len(pages)
+    return [
+        f"📄 全量行情分页 {index}/{total}\n{page}"
+        for index, page in enumerate(pages, start=1)
+    ]

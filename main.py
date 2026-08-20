@@ -27,6 +27,7 @@ from .renderer import (
     format_market_text,
     format_stock_detail_text,
     money,
+    paginate_text,
     prepare_dashboard,
     prepare_stock_detail,
 )
@@ -68,6 +69,14 @@ class HotMarketPlugin(Star):
         self.render_market_image = bool(config.get("render_market_image", True))
         self.send_full_market_text = bool(
             config.get("send_full_market_text", True)
+        )
+        self.full_market_node_chars = max(
+            500,
+            min(2000, int(config.get("full_market_node_chars", 1200))),
+        )
+        self.full_market_nodes_per_forward = max(
+            2,
+            min(8, int(config.get("full_market_nodes_per_forward", 4))),
         )
         self.delist_alert_enabled = bool(
             config.get("delist_alert_enabled", True)
@@ -511,6 +520,29 @@ class HotMarketPlugin(Star):
     def hot_market_group(self) -> None:
         """Hot-topic market commands."""
 
+    def _full_market_chains(
+        self,
+        event: AstrMessageEvent,
+        text: str,
+    ) -> list[list[Any]]:
+        if event.get_platform_name() != "aiocqhttp":
+            return [[Comp.Plain(text)]]
+
+        pages = paginate_text(text, self.full_market_node_chars)
+        chains: list[list[Any]] = []
+        for offset in range(0, len(pages), self.full_market_nodes_per_forward):
+            batch = pages[offset : offset + self.full_market_nodes_per_forward]
+            nodes = [
+                Comp.Node(
+                    uin=event.get_self_id(),
+                    name="热搜交易所",
+                    content=[Comp.Plain(page)],
+                )
+                for page in batch
+            ]
+            chains.append([Comp.Nodes(nodes=nodes)])
+        return chains
+
     @hot_market_group.command("行情")
     async def market_command(
         self,
@@ -549,9 +581,9 @@ class HotMarketPlugin(Star):
                         f"热搜交易所图片渲染失败，回退文本：{type(exc).__name__}: {exc}"
                     )
             if self.send_full_market_text or not image_sent:
-                yield event.plain_result(
-                    format_market_text(full_market_rows, updated_at)
-                )
+                full_text = format_market_text(full_market_rows, updated_at)
+                for chain in self._full_market_chains(event, full_text):
+                    yield event.chain_result(chain)
         except TradeError as exc:
             yield event.plain_result(f"❌ {exc}")
         except Exception as exc:
@@ -793,7 +825,7 @@ class HotMarketPlugin(Star):
                 else "持仓退榜预警：未启用"
             ),
             (
-                "全量行情明细：已启用"
+                "全量行情明细：已启用（QQ 分页转发）"
                 if self.send_full_market_text
                 else "全量行情明细：未启用"
             ),
@@ -837,7 +869,7 @@ class HotMarketPlugin(Star):
             "/热市 状态\n"
             "/热市 刷新\n\n"
             "行情图展示精选股票，并可继续发送完整非退市行情；"
-            "QQ 长文本由 AstrBot 自动折叠。\n"
+            "QQ 全量行情由插件分页为多节点转发。\n"
             "股票详情同时提供走势图、榜单摘要、原文链接，"
             "有封面时可追加发送封面图。\n"
             "各平台独立定价。热点排名越高，股价越高；"

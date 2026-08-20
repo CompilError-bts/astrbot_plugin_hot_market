@@ -68,8 +68,20 @@
   "send_full_market_text": {
     "description": "查询行情时发送全量明细",
     "type": "bool",
-    "hint": "开启后，行情图片后继续发送全部 active 与 fading 股票；QQ 长文本可由 AstrBot 的 forward_threshold 自动折叠为转发消息。",
+    "hint": "开启后，行情图片后继续发送全部 active 与 fading 股票；QQ 会由插件分页并分批发送为合并转发，避免单个超长节点发送失败。",
     "default": true
+  },
+  "full_market_node_chars": {
+    "description": "QQ 全量行情单节点字符数",
+    "type": "int",
+    "hint": "每个合并转发节点的目标上限，范围 500～2000，默认 1200。过大可能被 QQ 拒绝，过小会增加节点数量。",
+    "default": 1200
+  },
+  "full_market_nodes_per_forward": {
+    "description": "QQ 单条转发最大节点数",
+    "type": "int",
+    "hint": "一条合并转发中最多包含多少个分页节点，范围 2～8，默认 4。全量行情更长时会自动拆成多条转发记录。",
+    "default": 4
   },
   "detail_cover_enabled": {
     "description": "股票详情发送热搜封面图",

@@ -9,6 +9,7 @@ from astrbot_plugin_hot_market.renderer import (
     format_market_text,
     format_stock_detail_text,
     money,
+    paginate_text,
     prepare_dashboard,
     prepare_stock_detail,
     sparkline_points,
@@ -102,6 +103,19 @@ class RendererTest(unittest.TestCase):
         self.assertIn("#01 WB-今日热点", text)
         self.assertIn("离榜1轮 WB-昨日热点", text)
         self.assertIn("仅可卖出", text)
+
+    def test_paginate_text_respects_limit_and_labels_pages(self) -> None:
+        source = "\n".join(
+            f"第 {index:03d} 行 " + "热点" * 24 for index in range(80)
+        )
+        pages = paginate_text(source, 500)
+
+        self.assertGreater(len(pages), 1)
+        self.assertTrue(all(len(page) <= 500 for page in pages))
+        self.assertTrue(pages[0].startswith(f"📄 全量行情分页 1/{len(pages)}\n"))
+        self.assertTrue(
+            pages[-1].startswith(f"📄 全量行情分页 {len(pages)}/{len(pages)}\n")
+        )
 
     def test_sparkline_handles_flat_and_rising_data(self) -> None:
         flat = sparkline_points([100, 100, 100])
